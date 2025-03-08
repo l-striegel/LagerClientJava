@@ -2,6 +2,7 @@ package model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -103,11 +104,39 @@ public class Article {
      *
      * @return true wenn alle erforderlichen Felder ausgefüllt sind, sonst false
      */
+    /**
+     * Überprüft, ob ein Artikel alle erforderlichen Felder hat und die Validierungskriterien erfüllt.
+     *
+     * @return true wenn alle Validierungen bestanden wurden, sonst false
+     */
     public boolean isValid() {
-        return name != null && !name.isEmpty() &&
-                type != null && !type.isEmpty() &&
+        return name != null && !name.isEmpty() && name.length() <= 100 &&
+                type != null && !type.isEmpty() && type.length() <= 50 &&
                 stock >= 0 &&
-                unit != null && !unit.isEmpty();
+                unit != null && !unit.isEmpty() && unit.length() <= 20 &&
+                price >= 0 && price <= 9999999.99 &&
+                (location == null || location.length() <= 100) &&
+                (status == null || status.length() <= 50) &&
+                (link == null || link.isEmpty() || isValidUrl(link));
+    }
+
+    /**
+     * Überprüft, ob ein Link eine gültige URL ist.
+     *
+     * @param url Die zu prüfende URL
+     * @return true wenn die URL gültig ist, sonst false
+     */
+    private boolean isValidUrl(String url) {
+        if (url.length() > 255) {
+            return false;
+        }
+
+        try {
+            new URL(url);
+            return url.startsWith("http://") || url.startsWith("https://");
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**

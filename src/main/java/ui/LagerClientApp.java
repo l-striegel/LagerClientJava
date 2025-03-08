@@ -455,7 +455,8 @@ public class LagerClientApp {
                 logger.debug("Artikel ID {}: Timestamp aktualisiert auf {}", article.id, article.timestamp);
 
                 int apiId = article.id;
-                URL putUrl = new URL("https://localhost:5001/api/article/" + apiId);
+                String apiUrl = AppConfig.getInstance().getApiUrl();
+                URL putUrl = new URL(apiUrl + "/" + apiId);
                 HttpURLConnection putConn = (HttpURLConnection) putUrl.openConnection();
                 putConn.setRequestMethod("PUT");
                 putConn.setRequestProperty("Content-Type", "application/json");
@@ -546,108 +547,163 @@ public class LagerClientApp {
                 "Erfolg", JOptionPane.INFORMATION_MESSAGE);
     }
 
-    /**
-     * Fügt einen neuen Artikel hinzu.
-     */
     private void addNewArticle() {
         logger.info("Erstelle neuen Artikel");
 
-        // Erstelle einen neuen Artikel mit Standardwerten
-        Article newArticle = new Article();
-        newArticle.name = "Neuer Artikel";
-        newArticle.type = "Elektronik";
-        newArticle.stock = 0;
-        newArticle.unit = "Stück";
-        newArticle.price = 0.0;
-        newArticle.location = "";
-        newArticle.status = "Auf Lager";
-        newArticle.link = "";
+        // Erstelle einen Dialog zum Eingeben der Artikeldaten
+        JDialog dialog = new JDialog(mainFrame, "Neuen Artikel erstellen", true);
+        dialog.setLayout(new GridLayout(0, 2, 10, 10));
+        dialog.setSize(500, 400);
+        dialog.setLocationRelativeTo(mainFrame);
 
-        // Wichtig: Timestamp setzen, da das Backend DateTime erwartet
-        newArticle.timestamp = Instant.now().toString();
-        logger.debug("Neuer Artikel erstellt mit Timestamp: {}", newArticle.timestamp);
+        // Erstelle die Eingabefelder
+        JTextField nameField = new JTextField("Neuer Artikel", 20);
+        JTextField typeField = new JTextField("Elektronik", 20);
+        JSpinner stockSpinner = new JSpinner(new SpinnerNumberModel(0, 0, Integer.MAX_VALUE, 1));
+        JTextField unitField = new JTextField("Stück", 20);
+        JSpinner priceSpinner = new JSpinner(new SpinnerNumberModel(0.0, 0.0, 9999999.99, 0.01));
+        JTextField locationField = new JTextField("", 20);
+        JTextField statusField = new JTextField("Auf Lager", 20);
+        JTextField linkField = new JTextField("", 20);
 
-        newArticle.styles = new HashMap<>();
+        // Füge die Felder zum Dialog hinzu
+        dialog.add(new JLabel("Name (max. 100 Zeichen):"));
+        dialog.add(nameField);
+        dialog.add(new JLabel("Typ (max. 50 Zeichen):"));
+        dialog.add(typeField);
+        dialog.add(new JLabel("Bestand:"));
+        dialog.add(stockSpinner);
+        dialog.add(new JLabel("Einheit (max. 20 Zeichen):"));
+        dialog.add(unitField);
+        dialog.add(new JLabel("Preis:"));
+        dialog.add(priceSpinner);
+        dialog.add(new JLabel("Lagerort (max. 100 Zeichen):"));
+        dialog.add(locationField);
+        dialog.add(new JLabel("Status (max. 50 Zeichen):"));
+        dialog.add(statusField);
+        dialog.add(new JLabel("Link (gültige URL mit http:// oder https://, max. 255 Zeichen):"));
+        dialog.add(linkField);
 
-        // API-Aufruf zum Erstellen eines neuen Artikels
-        try {
-            URL postUrl = new URL("https://localhost:5001/api/article");
-            HttpURLConnection postConn = (HttpURLConnection) postUrl.openConnection();
-            postConn.setRequestMethod("POST");
-            postConn.setRequestProperty("Content-Type", "application/json");
-            postConn.setDoOutput(true);
+        // Buttons zum Speichern oder Abbrechen
+        JPanel buttonPanel = new JPanel();
+        JButton saveButton = new JButton("Speichern");
+        JButton cancelButton = new JButton("Abbrechen");
 
-            // Konfiguriere ObjectMapper
-            ObjectMapper objectMapper = new ObjectMapper();
-            objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        buttonPanel.add(saveButton);
+        buttonPanel.add(cancelButton);
+        dialog.add(new JLabel(""));
+        dialog.add(buttonPanel);
 
-            // Erstelle ein umschließendes Objekt mit "article" als Schlüssel
-            Map<String, Article> requestPayload = new HashMap<>();
-            requestPayload.put("article", newArticle);
+        // Abbrechen-Button-Aktion
+        cancelButton.addActionListener(e -> dialog.dispose());
 
-            String jsonPayload = objectMapper.writeValueAsString(requestPayload);
+        // Speichern-Button-Aktion
+        saveButton.addActionListener(e -> {
+            Article newArticle = new Article();
+            newArticle.name = nameField.getText().trim();
+            newArticle.type = typeField.getText().trim();
+            newArticle.stock = (int) stockSpinner.getValue();
+            newArticle.unit = unitField.getText().trim();
+            newArticle.price = ((Number) priceSpinner.getValue()).doubleValue();
+            newArticle.location = locationField.getText().trim();
+            newArticle.status = statusField.getText().trim();
+            newArticle.link = linkField.getText().trim();
 
-            // Debug: Zeige das gesendete JSON an
-            logger.debug("Sende POST-Payload: {}", jsonPayload);
+            // Wichtig: Timestamp setzen, da das Backend DateTime erwartet
+            newArticle.timestamp = Instant.now().toString();
+            newArticle.styles = new HashMap<>();
 
-            try (OutputStream os = postConn.getOutputStream()) {
-                os.write(jsonPayload.getBytes());
-                os.flush();
+            // Validierung
+            if (!newArticle.isValid()) {
+                JOptionPane.showMessageDialog(dialog,
+                        "Bitte überprüfen Sie die Eingaben. Stellen Sie sicher, dass alle Pflichtfelder ausgefüllt sind\n" +
+                                "und Links dem Format http://example.com entsprechen.",
+                        "Validierungsfehler",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
             }
 
-            // Verarbeite die Antwort und aktualisiere die Tabelle
-            int responseCode = postConn.getResponseCode();
-            logger.debug("POST-Antwortcode: {}", responseCode);
+            // Senden des Artikels an den Server
+            try {
+                String apiUrl = AppConfig.getInstance().getApiUrl();
+                URL postUrl = new URL(apiUrl);
+                HttpURLConnection postConn = (HttpURLConnection) postUrl.openConnection();
+                postConn.setRequestMethod("POST");
+                postConn.setRequestProperty("Content-Type", "application/json");
+                postConn.setDoOutput(true);
 
-            // Bei Fehler: Lese den Fehlertext aus
-            if (responseCode != HttpURLConnection.HTTP_CREATED && responseCode != HttpURLConnection.HTTP_OK) {
-                try (BufferedReader br = new BufferedReader(new InputStreamReader(
-                        postConn.getErrorStream() != null ? postConn.getErrorStream() : postConn.getInputStream()))) {
-                    StringBuilder response = new StringBuilder();
-                    String line;
-                    while ((line = br.readLine()) != null) {
-                        response.append(line);
+                // Konfiguriere ObjectMapper
+                ObjectMapper objectMapper = new ObjectMapper();
+                objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+                // Article-Objekt direkt senden
+                String jsonPayload = objectMapper.writeValueAsString(newArticle);
+
+                // Debug: Zeige das gesendete JSON an
+                logger.debug("Sende POST-Payload: {}", jsonPayload);
+
+                try (OutputStream os = postConn.getOutputStream()) {
+                    os.write(jsonPayload.getBytes());
+                    os.flush();
+                }
+
+                // Verarbeite die Antwort und aktualisiere die Tabelle
+                int responseCode = postConn.getResponseCode();
+                logger.debug("POST-Antwortcode: {}", responseCode);
+
+                // Bei Fehler: Lese den Fehlertext aus
+                if (responseCode != HttpURLConnection.HTTP_CREATED && responseCode != HttpURLConnection.HTTP_OK) {
+                    try (BufferedReader br = new BufferedReader(new InputStreamReader(
+                            postConn.getErrorStream() != null ? postConn.getErrorStream() : postConn.getInputStream()))) {
+                        StringBuilder response = new StringBuilder();
+                        String line;
+                        while ((line = br.readLine()) != null) {
+                            response.append(line);
+                        }
+                        String errorText = response.toString();
+                        logger.error("Fehlerantwort vom Server: {}", errorText);
+                        JOptionPane.showMessageDialog(dialog,
+                                "Fehler beim Erstellen des Artikels: " + responseCode +
+                                        "\nDetails: " + errorText,
+                                "Fehler",
+                                JOptionPane.ERROR_MESSAGE);
                     }
-                    String errorText = response.toString();
-                    logger.error("Fehlerantwort vom Server: {}", errorText);
-                    JOptionPane.showMessageDialog(null,
-                            "Fehler beim Erstellen des Artikels: " + responseCode +
-                                    "\nDetails: " + errorText,
-                            "Fehler",
-                            JOptionPane.ERROR_MESSAGE);
+                } else {
+                    logger.info("Artikel erfolgreich erstellt, lade Artikelliste neu");
+                    dialog.dispose();
+
+                    // Lade alle Artikel neu
+                    articles = ApiClient.fetchArticles();
+                    // Speichere die ursprünglichen Timestamps für die neuen Artikel
+                    for (Article article : articles) {
+                        originalTimestamps.put(article.id, article.timestamp);
+                    }
+                    tableModel = new ArticleTableModel(articles, changedArticles);
+                    table.setModel(tableModel);
+
+                    // Setze den Sorter und Renderer erneut
+                    sorter = new TableRowSorter<>(tableModel);
+                    table.setRowSorter(sorter);
+                    sorter.setComparator(3, Comparator.comparingInt(o -> Integer.parseInt(o.toString())));
+
+                    table.setDefaultRenderer(Object.class, new StyledCellRenderer(articles));
+
+                    // Initialisiere das ID-Mapping neu
+                    tableModel.refreshIdMapping();
+
+                    logger.info("Benutzeroberfläche nach Artikelerstellung aktualisiert");
+                    JOptionPane.showMessageDialog(null, "Neuer Artikel wurde erstellt.", "Erfolg", JOptionPane.INFORMATION_MESSAGE);
                 }
-            } else {
-                logger.info("Artikel erfolgreich erstellt, lade Artikelliste neu");
 
-                // Lade alle Artikel neu
-                articles = ApiClient.fetchArticles();
-                // Speichere die ursprünglichen Timestamps für die neuen Artikel
-                for (Article article : articles) {
-                    originalTimestamps.put(article.id, article.timestamp);
-                }
-                tableModel = new ArticleTableModel(articles, changedArticles);
-                table.setModel(tableModel);
-
-                // Setze den Sorter und Renderer erneut
-                sorter = new TableRowSorter<>(tableModel);
-                table.setRowSorter(sorter);
-                sorter.setComparator(3, Comparator.comparingInt(o -> Integer.parseInt(o.toString())));
-
-                table.setDefaultRenderer(Object.class, new StyledCellRenderer(articles));
-
-                // Initialisiere das ID-Mapping neu
-                tableModel.refreshIdMapping();
-
-                logger.info("Benutzeroberfläche nach Artikelerstellung aktualisiert");
-                JOptionPane.showMessageDialog(null, "Neuer Artikel wurde erstellt.", "Erfolg", JOptionPane.INFORMATION_MESSAGE);
+                postConn.disconnect();
+            } catch (Exception ex) {
+                logger.error("Ausnahme beim Erstellen eines neuen Artikels: {}", ex.getMessage(), ex);
+                JOptionPane.showMessageDialog(dialog, "Fehler beim Erstellen des Artikels: " + ex.getMessage(),
+                        "Fehler", JOptionPane.ERROR_MESSAGE);
             }
+        });
 
-            postConn.disconnect();
-        } catch (Exception ex) {
-            logger.error("Ausnahme beim Erstellen eines neuen Artikels: {}", ex.getMessage(), ex);
-            JOptionPane.showMessageDialog(null, "Fehler beim Erstellen des Artikels: " + ex.getMessage(),
-                    "Fehler", JOptionPane.ERROR_MESSAGE);
-        }
+        dialog.setVisible(true);
     }
 
     /**
@@ -682,7 +738,8 @@ public class LagerClientApp {
 
         // API-Aufruf zum Löschen
         try {
-            URL deleteUrl = new URL("https://localhost:5001/api/article/" + apiId);
+            String apiUrl = AppConfig.getInstance().getApiUrl();
+            URL deleteUrl = new URL(apiUrl + "/" + apiId);
             HttpURLConnection deleteConn = (HttpURLConnection) deleteUrl.openConnection();
             deleteConn.setRequestMethod("DELETE");
 
