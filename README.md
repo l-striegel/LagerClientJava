@@ -14,8 +14,7 @@ Eine Java-Desktop-Anwendung zur Verwaltung von Lagerartikeln mit benutzerfreundl
 - **Responsive Design**: Moderne Benutzeroberfläche mit Unterstützung für Sortierung und Filterung
 
 ## Screenshot
-
-*Hier könnte ein Screenshot deiner Anwendung stehen*
+![image](https://github.com/user-attachments/assets/bcd121c0-f7dc-42c0-945e-627ea105e957)
 
 ## Installation
 
