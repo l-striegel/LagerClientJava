@@ -17,6 +17,8 @@ Eine Java-Desktop-Anwendung zur Verwaltung von Lagerartikeln mit benutzerfreundl
 
 ## Screenshot
 ![image](https://github.com/user-attachments/assets/26e143af-49b9-4631-b6ff-6052913ffd18)
+![image](https://github.com/user-attachments/assets/1ac19bb0-1f98-41f2-a1fa-a61bd52a9732)
+
 
 ## Installation
 
