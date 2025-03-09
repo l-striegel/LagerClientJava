@@ -16,7 +16,7 @@ Eine Java-Desktop-Anwendung zur Verwaltung von Lagerartikeln mit benutzerfreundl
 - **Offline-Modus**: Lokale Datenspeicherung zur Verwendung ohne Backend-Verbindung
 
 ## Screenshot
-![image](https://github.com/user-attachments/assets/bcd121c0-f7dc-42c0-945e-627ea105e957)
+![image](https://github.com/user-attachments/assets/26e143af-49b9-4631-b6ff-6052913ffd18)
 
 ## Installation
 
