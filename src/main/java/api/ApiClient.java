@@ -14,6 +14,14 @@ import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
+import java.security.MessageDigest;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import com.fasterxml.jackson.databind.JsonNode;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.HashMap;
 
 /**
  * Client für die Kommunikation mit der Artikel-API.
@@ -227,4 +235,105 @@ public class ApiClient {
             logger.error("Fehler beim Deaktivieren der SSL-Zertifikatsprüfung: {}", e.getMessage(), e);
         }
     }
+
+    public static boolean checkConnection() {
+        try {
+            // Verwende nur die Basis-URL ohne spezifische Artikel-ID
+            URL url = new URL(API_BASE_URL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestMethod("GET");
+            int responseCode = conn.getResponseCode();
+            conn.disconnect();
+
+            // Bei GET auf die Basis-URL erwarten wir normalerweise einen 200 OK Status
+            return responseCode >= 200 && responseCode < 400;
+        } catch (Exception e) {
+            logger.debug("Verbindungscheck fehlgeschlagen: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Speichert Artikel in einer lokalen JSON-Datei mit Integritätsprüfung.
+     *
+     * @param articles Die zu speichernden Artikel
+     * @return true wenn erfolgreich gespeichert, false bei Fehler
+     */
+    public static boolean saveArticlesToLocalFile(List<Article> articles) {
+        try {
+            File localDir = new File("localData");
+            if (!localDir.exists()) {
+                localDir.mkdir();
+            }
+
+            // JSON erstellen
+            ObjectMapper mapper = new ObjectMapper();
+            String jsonData = mapper.writeValueAsString(articles);
+
+            // Hash berechnen
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(jsonData.getBytes(StandardCharsets.UTF_8));
+            String hash = Base64.getEncoder().encodeToString(hashBytes);
+
+            // Daten mit Hash speichern
+            Map<String, Object> dataWithHash = new HashMap<>();
+            dataWithHash.put("hash", hash);
+            dataWithHash.put("data", articles);
+
+            File file = new File(localDir, "articles.json");
+            mapper.writerWithDefaultPrettyPrinter().writeValue(file, dataWithHash);
+
+            logger.info("{} Artikel lokal gespeichert in: {}", articles.size(), file.getAbsolutePath());
+            return true;
+        } catch (Exception e) {
+            logger.error("Fehler beim lokalen Speichern der Artikel: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Lädt Artikel aus einer lokalen JSON-Datei mit Integritätsprüfung.
+     *
+     * @return Liste der geladenen Artikel oder leere Liste bei Fehler
+     */
+    public static List<Article> loadArticlesFromLocalFile() {
+        try {
+            File file = new File("localData/articles.json");
+            if (!file.exists()) {
+                logger.warn("Keine lokale Artikeldatei gefunden");
+                return new ArrayList<>();
+            }
+
+            ObjectMapper mapper = new ObjectMapper();
+            mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+            // Lese die komplette Struktur mit Hash
+            JsonNode rootNode = mapper.readTree(file);
+            String storedHash = rootNode.get("hash").asText();
+            JsonNode dataNode = rootNode.get("data");
+
+            // JSON-Daten extrahieren und Hash überprüfen
+            String dataJson = dataNode.toString();
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(dataJson.getBytes(StandardCharsets.UTF_8));
+            String calculatedHash = Base64.getEncoder().encodeToString(hashBytes);
+
+            if (!storedHash.equals(calculatedHash)) {
+                logger.warn("Die lokale Datei wurde manipuliert! Hash stimmt nicht überein.");
+                return new ArrayList<>();
+            }
+
+            // Daten deserialisieren
+            Article[] articleArray = mapper.treeToValue(dataNode, Article[].class);
+            List<Article> articles = new ArrayList<>(Arrays.asList(articleArray));
+            logger.info("{} Artikel aus lokaler Datei geladen (Integritätsprüfung bestanden)", articles.size());
+            return articles;
+        } catch (Exception e) {
+            logger.error("Fehler beim Laden lokaler Artikel: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
 }

@@ -3,6 +3,7 @@ package ui;
 import api.ApiClient;
 import config.AppConfig;
 import model.Article;
+import model.ArticleDifference;
 import model.ArticleTableModel;
 import model.CellStyle;
 import org.slf4j.Logger;
@@ -12,6 +13,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import javax.swing.*;
+import javax.swing.Timer;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.awt.event.*;
@@ -23,13 +25,13 @@ import java.net.URL;
 import java.time.Instant;
 import java.util.*;
 import java.util.List;
-
 /**
  * Hauptklasse der Anwendung, die die Benutzeroberfläche und die Anwendungslogik enthält.
  */
 public class LagerClientApp {
     private static final Logger logger = LoggerFactory.getLogger(LagerClientApp.class);
 
+    private static final String VERSION = "1.1.0";
     private JTable table;
     private ArticleTableModel tableModel;
     private List<Article> articles;
@@ -39,6 +41,14 @@ public class LagerClientApp {
     private final Set<Point> selectedCells = new HashSet<>();
     private JFrame mainFrame;
     private final Map<Integer, String> originalTimestamps = new HashMap<>();
+    private JLabel statusLabel;
+    private JLabel connectionLabel;
+    private JCheckBox autoSaveCheckbox;
+    private JCheckBox offlineModeCheckbox;
+    private boolean isOfflineMode = false;
+    private Timer connectionTimer;
+
+
 
     /**
      * Einstiegspunkt der Anwendung.
@@ -64,28 +74,26 @@ public class LagerClientApp {
     /**
      * Erstellt und zeigt die Benutzeroberfläche an.
      */
-    /**
-     * Erstellt und zeigt die Benutzeroberfläche an.
-     */
     private void createAndShowGUI() {
         logger.debug("Erstelle Benutzeroberfläche");
-        mainFrame = new JFrame("LagerClient - Artikelverwaltung");
+        mainFrame = new JFrame("LagerClient - Artikelverwaltung v" + VERSION);
         mainFrame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        mainFrame.setSize(900, 500);
+        mainFrame.setSize(900, 550);
+        // Icon für die Anwendung setzen
+        try {
+            ImageIcon appIcon = new ImageIcon(getClass().getResource("/icon.png"));
+            mainFrame.setIconImage(appIcon.getImage());
+            logger.debug("Anwendungsicon gesetzt");
+        } catch (Exception e) {
+            logger.warn("Konnte Anwendungsicon nicht laden: {}", e.getMessage());
+        }
 
         // Referenz auf diese Instanz speichern, damit der Renderer darauf zugreifen kann
         mainFrame.getRootPane().putClientProperty("appInstance", this);
         logger.trace("appInstance in RootPane gespeichert");
 
-        logger.info("Lade Artikel von der API");
-        articles = ApiClient.fetchArticles();
-        logger.debug("{} Artikel geladen", articles.size());
-
-        // Speichere ursprüngliche Timestamps
-        for (Article article : articles) {
-            originalTimestamps.put(article.id, article.timestamp);
-        }
-        logger.trace("Ursprüngliche Timestamps gespeichert");
+        // Lade Artikel: Versuche online, fallback auf lokal
+        loadArticles();
 
         // Erstelle Tabellenmodell und -komponente
         tableModel = new ArticleTableModel(articles, changedArticles);
@@ -112,23 +120,95 @@ public class LagerClientApp {
         logger.trace("ScrollPane zur Tabelle hinzugefügt");
 
         createMenuBar(mainFrame);
+
+        // Einstellungs-Panel hinzufügen
+        createSettingsPanel();
+
+        // Statusleiste hinzufügen
+        createStatusBar();
+
         addSelectionListener();
         createButtons();
+
+        // Beim Beenden der Anwendung lokale Sicherung erstellen
+        mainFrame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                if (autoSaveCheckbox.isSelected()) {
+                    logger.info("Anwendung wird beendet, speichere lokale Sicherung");
+                    ApiClient.saveArticlesToLocalFile(articles);
+                }
+            }
+        });
 
         mainFrame.setVisible(true);
         logger.info("Benutzeroberfläche wurde angezeigt");
     }
 
     /**
+     * Lädt Artikel aus der API oder aus lokaler Datei, wenn offline.
+     */
+    private void loadArticles() {
+        // Zuerst versuchen, von der API zu laden, falls nicht im Offline-Modus
+        if (!isOfflineMode) {
+            try {
+                //articles = ApiClient.fetchArticles();
+                articles = new ArrayList<>(ApiClient.fetchArticles());
+                if (!articles.isEmpty()) {
+                    logger.info("{} Artikel von der API geladen", articles.size());
+
+                    // Speichere ursprüngliche Timestamps
+                    for (Article article : articles) {
+                        originalTimestamps.put(article.id, article.timestamp);
+                    }
+                    logger.trace("Ursprüngliche Timestamps gespeichert");
+
+                    // Bei erfolgreicher API-Abfrage: Speichere Artikel auch lokal
+                    if (autoSaveCheckbox != null && autoSaveCheckbox.isSelected()) {
+                        ApiClient.saveArticlesToLocalFile(articles);
+                    }
+                    return;
+                }
+            } catch (Exception e) {
+                logger.warn("Fehler beim Laden von der API: {}", e.getMessage());
+            }
+        }
+
+        // Fallback: Versuche, lokale Daten zu laden
+        articles = ApiClient.loadArticlesFromLocalFile();
+        if (!articles.isEmpty()) {
+            logger.info("{} Artikel aus lokaler Datei geladen", articles.size());
+
+            // Speichere ursprüngliche Timestamps auch hier
+            for (Article article : articles) {
+                originalTimestamps.put(article.id, article.timestamp);
+            }
+
+            // Nur Dialog anzeigen, wenn nicht explizit im Offline-Modus
+            if (!isOfflineMode) {
+                SwingUtilities.invokeLater(() -> {
+                    JOptionPane.showMessageDialog(mainFrame,
+                            "Verbindung zum Server nicht möglich.\nArtikel wurden aus lokaler Datei geladen.",
+                            "Offline-Modus", JOptionPane.WARNING_MESSAGE);
+                });
+            }
+        } else {
+            logger.error("Keine Artikel verfügbar - weder online noch offline");
+            articles = new ArrayList<>(); // Initialisiere mit leerer Liste
+            SwingUtilities.invokeLater(() -> {
+                JOptionPane.showMessageDialog(mainFrame,
+                        "Keine Artikel verfügbar. Bitte stellen Sie eine Verbindung zum Server her oder legen Sie Artikel manuell an.",
+                        "Keine Daten", JOptionPane.ERROR_MESSAGE);
+            });
+        }
+    }
+
+    /**
      * Erstellt die Schaltflächen und fügt sie der Benutzeroberfläche hinzu.
      */
     private void createButtons() {
-        JButton saveButton = new JButton("Änderungen speichern");
+        JButton saveButton = new JButton("Speichern");
         saveButton.addActionListener(e -> saveChanges());
-
-        // Debug-Button nur anzeigen, wenn Debug-Modus aktiviert ist
-        boolean debugMode = AppConfig.getInstance().isDebugMode();
-        logger.debug("Debug-Modus aus Konfiguration geladen: {}", debugMode);
 
         // Neuer Button zum Hinzufügen eines Artikels
         JButton addButton = new JButton("Neuer Artikel");
@@ -143,7 +223,7 @@ public class LagerClientApp {
                 deleteArticle(modelRow);
             } else {
                 logger.warn("Kein Artikel zum Löschen ausgewählt");
-                JOptionPane.showMessageDialog(null, "Bitte wählen Sie einen Artikel zum Löschen aus.");
+                JOptionPane.showMessageDialog(mainFrame, "Bitte wählen Sie einen Artikel zum Löschen aus.");
             }
         });
 
@@ -153,6 +233,7 @@ public class LagerClientApp {
         buttonPanel.add(deleteButton);
 
         // Debug-Button nur hinzufügen, wenn Debug-Modus aktiviert ist
+        boolean debugMode = AppConfig.getInstance().isDebugMode();
         if (debugMode) {
             JButton debugButton = new JButton("Debug: Markierte Zellen");
             debugButton.addActionListener(e -> printSelectedCells());
@@ -165,12 +246,469 @@ public class LagerClientApp {
     }
 
     /**
+     * Erstellt die Statusleiste.
+     */
+    private void createStatusBar() {
+        JPanel statusPanel = new JPanel(new BorderLayout());
+        statusPanel.setBorder(BorderFactory.createEtchedBorder());
+
+        statusLabel = new JLabel("Bereit");
+        statusPanel.add(statusLabel, BorderLayout.WEST);
+
+        // Unicode-Symbole für Status
+        connectionLabel = new JLabel("● Wird geprüft...");  // Gefüllter Kreis
+        connectionLabel.setForeground(Color.GRAY);
+        statusPanel.add(connectionLabel, BorderLayout.EAST);
+
+        // Statusleiste zum Frame hinzufügen - oberhalb der Tabelle aber unterhalb der Settings
+        JPanel centerPanel = new JPanel(new BorderLayout());
+        centerPanel.add(statusPanel, BorderLayout.NORTH);
+        centerPanel.add(new JScrollPane(table), BorderLayout.CENTER);
+
+        mainFrame.add(centerPanel, BorderLayout.CENTER);
+
+        // Initialisiere die Verbindungsprüfung
+        connectionTimer = new Timer(30000, e -> updateConnectionStatus());
+        connectionTimer.start();
+
+        // Sofortige erste Prüfung
+        updateConnectionStatus();
+    }
+
+    /**
+     * Erstellt das Einstellungs-Panel.
+     */
+    private void createSettingsPanel() {
+        JPanel settingsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        settingsPanel.setBorder(BorderFactory.createTitledBorder("Einstellungen"));
+
+        // Auto-Save Checkbox
+        autoSaveCheckbox = new JCheckBox("Automatisches Speichern");
+        autoSaveCheckbox.setToolTipText("Bei Änderungen automatisch lokale Sicherung erstellen");
+        autoSaveCheckbox.setSelected(true); // Standard: aktiviert
+        autoSaveCheckbox.addActionListener(e -> {
+            boolean autoSave = autoSaveCheckbox.isSelected();
+            logger.info("Automatisches Speichern: {}", autoSave ? "aktiviert" : "deaktiviert");
+        });
+
+        // Offline-Modus Checkbox
+        offlineModeCheckbox = new JCheckBox("Offline-Modus");
+        offlineModeCheckbox.setToolTipText("Arbeitet nur mit lokalen Daten ohne Serververbindung");
+        offlineModeCheckbox.addActionListener(e -> {
+            isOfflineMode = offlineModeCheckbox.isSelected();
+            logger.info("Offline-Modus: {}", isOfflineMode ? "aktiviert" : "deaktiviert");
+
+            // Status aktualisieren
+            updateConnectionStatus();
+
+            // Bei Aktivierung von Offline-Modus:
+            if (isOfflineMode) {
+                JOptionPane.showMessageDialog(mainFrame,
+                        "Offline-Modus aktiviert.\nÄnderungen werden nur lokal gespeichert.",
+                        "Offline-Modus",
+                        JOptionPane.INFORMATION_MESSAGE);
+            } else {
+                // Bei Deaktivierung: Versuche, Daten vom Server zu laden
+                reloadArticlesFromServer();
+            }
+        });
+
+        settingsPanel.add(autoSaveCheckbox);
+        settingsPanel.add(offlineModeCheckbox);
+
+        // Füge das Settings-Panel hinzu
+        mainFrame.add(settingsPanel, BorderLayout.NORTH);
+    }
+
+    /**
+     * Aktualisiert den Verbindungsstatus in der Statusleiste.
+     */
+    private void updateConnectionStatus() {
+        // Bei forciertem Offline-Modus immer als offline anzeigen
+        if (isOfflineMode) {
+            connectionLabel.setText("● Offline-Modus");
+            connectionLabel.setForeground(Color.ORANGE); // Orange für bewussten Offline-Modus
+            statusLabel.setText("Offline - Lokaler Modus");
+            return;
+        }
+
+        // Nur Verbindungsprüfung durchführen, wenn nicht im Offline-Modus
+        new SwingWorker<Boolean, Void>() {
+            @Override
+            protected Boolean doInBackground() {
+                return ApiClient.checkConnection();
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    boolean connected = get();
+                    connectionLabel.setText(connected ? "● Verbunden" : "● Keine Verbindung");
+                    connectionLabel.setForeground(connected ? Color.GREEN : Color.RED);
+                    statusLabel.setText(connected ? "Bereit" : "Offline - Lokaler Modus");
+                } catch (Exception e) {
+                    logger.error("Fehler bei Verbindungsprüfung: {}", e.getMessage());
+                    connectionLabel.setText("● Fehler");
+                    connectionLabel.setForeground(Color.RED);
+                }
+            }
+        }.execute();
+    }
+
+    /**
+     * Lädt Artikel neu vom Server, wenn Online-Modus aktiviert wurde.
+     * Bei lokalen Änderungen wird ein Dialog mit Optionen angezeigt.
+     */
+    private void reloadArticlesFromServer() {
+        // Prüfen, ob lokale Änderungen vorhanden sind
+        if (!changedArticles.isEmpty()) {
+            // Es gibt lokale Änderungen, frage den Benutzer
+            String[] options = {
+                    "Lokale Änderungen hochladen",
+                    "Server-Daten laden (lokale Änderungen verwerfen)",
+                    "Unterschiede anzeigen",
+                    "Abbrechen (im Offline-Modus bleiben)"
+            };
+
+            int choice = JOptionPane.showOptionDialog(mainFrame,
+                    "Sie haben lokale Änderungen vorgenommen. Wie möchten Sie fortfahren?",
+                    "Offline zu Online Wechsel",
+                    JOptionPane.DEFAULT_OPTION,
+                    JOptionPane.QUESTION_MESSAGE,
+                    null, options, options[0]);
+
+            switch (choice) {
+                case 0: // Lokale Änderungen hochladen
+                    syncLocalChangesToServer();
+                    return;
+                case 1: // Server-Daten laden
+                    // Weiter mit normaler Implementierung
+                    break;
+                case 2: // Unterschiede anzeigen
+                    compareLocalAndServerArticles();
+                    return;
+                case 3: // Abbrechen
+                default:
+                    // Zurück in den Offline-Modus
+                    offlineModeCheckbox.setSelected(true);
+                    isOfflineMode = true;
+                    updateConnectionStatus();
+                    return;
+            }
+        }
+
+        // Standardimplementierung (Server-Daten laden)
+        new SwingWorker<Boolean, Void>() {
+            @Override
+            protected Boolean doInBackground() {
+                try {
+                    List<Article> newArticles = new ArrayList<>(ApiClient.fetchArticles());
+                    logger.debug("Neue Artikelliste empfangen: {} Artikel", newArticles.size());
+                    if (!newArticles.isEmpty()) {
+                        logger.debug("Artikelliste nicht leer, beginne mit dem Ersetzen");
+                        articles.clear();
+                        articles.addAll(newArticles);
+                        // Timestamps aktualisieren
+                        originalTimestamps.clear();
+                        for (Article article : articles) {
+                            originalTimestamps.put(article.id, article.timestamp);
+                        }
+                        return true;
+                    }
+                    return false;
+                } catch (Exception e) {
+                    logger.error("Fehler beim Laden vom Server: {}", e.getMessage());
+                    return false;
+                }
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    boolean success = get();
+                    if (success) {
+                        // Aktualisiere die Tabelle
+                        tableModel = new ArticleTableModel(articles, changedArticles);
+                        table.setModel(tableModel);
+                        sorter = new TableRowSorter<>(tableModel);
+                        table.setRowSorter(sorter);
+                        sorter.setComparator(3, Comparator.comparingInt(o -> Integer.parseInt(o.toString())));
+                        tableModel.fireTableDataChanged();
+                        JOptionPane.showMessageDialog(mainFrame,
+                                "Artikel wurden erfolgreich vom Server geladen.",
+                                "Online-Modus",
+                                JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(mainFrame,
+                                "Verbindung zum Server nicht möglich.\nBleibe bei lokalen Daten.",
+                                "Verbindungsfehler",
+                                JOptionPane.WARNING_MESSAGE);
+                        // Wieder offline gehen
+                        offlineModeCheckbox.setSelected(true);
+                        isOfflineMode = true;
+                        updateConnectionStatus();
+                    }
+                } catch (Exception e) {
+                    logger.error("Fehler beim Aktualisieren der Tabelle: {}", e.getMessage());
+                }
+            }
+        }.execute();
+    }
+
+    /**
+     * Synchronisiert lokale Änderungen mit dem Server.
+     * Lädt geänderte Artikel hoch und fügt neue Artikel hinzu.
+     */
+    private void syncLocalChangesToServer() {
+        new SwingWorker<Boolean, Void>() {
+            @Override
+            protected Boolean doInBackground() {
+                boolean success = true;
+
+                try {
+                    // 1. Zuerst prüfen, ob Server erreichbar ist
+                    if (!ApiClient.checkConnection()) {
+                        return false;
+                    }
+
+                    // 2. Lokale Änderungen hochladen
+
+                    // 2.1 Geänderte existierende Artikel (positive IDs)
+                    Set<Article> existingArticles = new HashSet<>();
+                    for (Article article : changedArticles) {
+                        if (article.id > 0) {
+                            existingArticles.add(article);
+                        }
+                    }
+
+                    if (!existingArticles.isEmpty()) {
+                        // Vorhandene Implementierung zum Speichern nutzen
+                        saveChangesForced(existingArticles);
+                    }
+
+                    // 2.2 Neue Artikel hochladen (negative IDs)
+                    List<Article> newArticles = new ArrayList<>();
+                    for (Article article : articles) {
+                        if (article.id < 0) {
+                            newArticles.add(article);
+                        }
+                    }
+
+                    for (Article newArticle : newArticles) {
+                        try {
+                            String apiUrl = AppConfig.getInstance().getApiUrl();
+                            URL postUrl = new URL(apiUrl);
+                            HttpURLConnection postConn = (HttpURLConnection) postUrl.openConnection();
+                            postConn.setRequestMethod("POST");
+                            postConn.setRequestProperty("Content-Type", "application/json");
+                            postConn.setDoOutput(true);
+
+                            ObjectMapper objectMapper = new ObjectMapper();
+                            objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+                            // Timestamp im Format aktualisieren
+                            Instant now = Instant.now();
+                            newArticle.timestamp = now.toString().split("\\.")[0] + "Z";
+
+                            // Article-Objekt senden
+                            String jsonPayload = objectMapper.writeValueAsString(newArticle);
+                            logger.debug("Sende POST-Payload für neuen Artikel: {}", jsonPayload);
+
+                            try (OutputStream os = postConn.getOutputStream()) {
+                                os.write(jsonPayload.getBytes());
+                                os.flush();
+                            }
+
+                            int responseCode = postConn.getResponseCode();
+                            if (responseCode != HttpURLConnection.HTTP_CREATED && responseCode != HttpURLConnection.HTTP_OK) {
+                                logger.error("Fehler beim Hochladen des neuen Artikels: HTTP {}", responseCode);
+                                success = false;
+                            }
+
+                            postConn.disconnect();
+                        } catch (Exception e) {
+                            logger.error("Fehler beim Hochladen des neuen Artikels: {}", e.getMessage());
+                            success = false;
+                        }
+                    }
+
+                    // 3. Aktualisierte Daten vom Server laden
+                    List<Article> serverArticles = ApiClient.fetchArticles();
+                    articles.clear();
+                    articles.addAll(serverArticles);
+
+                    // Timestamps aktualisieren
+                    originalTimestamps.clear();
+                    for (Article article : articles) {
+                        originalTimestamps.put(article.id, article.timestamp);
+                    }
+
+                    // Alle Änderungen wurden übertragen
+                    changedArticles.clear();
+
+                    return success;
+
+                } catch (Exception e) {
+                    logger.error("Fehler bei der Synchronisierung: {}", e.getMessage());
+                    return false;
+                }
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    boolean success = get();
+                    if (success) {
+                        // Aktualisiere die Tabelle
+                        tableModel = new ArticleTableModel(articles, changedArticles);
+                        table.setModel(tableModel);
+                        sorter = new TableRowSorter<>(tableModel);
+                        table.setRowSorter(sorter);
+                        sorter.setComparator(3, Comparator.comparingInt(o -> Integer.parseInt(o.toString())));
+                        tableModel.fireTableDataChanged();
+
+                        JOptionPane.showMessageDialog(mainFrame,
+                                "Synchronisierung erfolgreich. Alle lokalen Änderungen wurden hochgeladen.",
+                                "Synchronisierung erfolgreich",
+                                JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(mainFrame,
+                                "Fehler bei der Synchronisierung. Bleibe im Offline-Modus.",
+                                "Synchronisierungsfehler",
+                                JOptionPane.ERROR_MESSAGE);
+                        // Wieder offline gehen
+                        offlineModeCheckbox.setSelected(true);
+                        isOfflineMode = true;
+                        updateConnectionStatus();
+                    }
+                } catch (Exception e) {
+                    logger.error("Fehler beim Aktualisieren nach Synchronisierung: {}", e.getMessage());
+                }
+            }
+        }.execute();
+    }
+
+    /**
+     * Vergleicht lokale Artikel mit Server-Artikeln und zeigt Unterschiede an.
+     */
+    private void compareLocalAndServerArticles() {
+        try {
+            // Server-Artikel abrufen
+            List<Article> serverArticles = ApiClient.fetchArticles();
+
+            // Lokale Änderungen identifizieren
+            Map<Integer, Article> serverMap = new HashMap<>();
+            for (Article article : serverArticles) {
+                serverMap.put(article.id, article);
+            }
+
+            // Vergleichsergebnisse speichern
+            List<ArticleDifference> differences = new ArrayList<>();
+
+            // Geänderte Artikel prüfen
+            for (Article changedArticle : changedArticles) {
+                // Ignoriere lokal hinzugefügte Artikel für diesen Schritt
+                if (changedArticle.id < 0) continue;
+
+                if (serverMap.containsKey(changedArticle.id)) {
+                    Article serverArticle = serverMap.get(changedArticle.id);
+                    // Vergleiche und füge Unterschiede hinzu
+                    differences.add(new ArticleDifference(changedArticle, serverArticle));
+                } else {
+                    // Artikel auf dem Server gelöscht
+                    differences.add(new ArticleDifference(changedArticle, null));
+                }
+            }
+
+            // Prüfe auf neue lokale Artikel (negative IDs)
+            for (Article article : articles) {
+                if (article.id < 0) {
+                    differences.add(new ArticleDifference(article, null, true));
+                }
+            }
+
+            // Dialog mit Unterschieden anzeigen
+            showDifferencesDialog(differences);
+
+        } catch (Exception e) {
+            logger.error("Fehler beim Vergleichen von lokalen und Server-Artikeln: {}", e.getMessage());
+            JOptionPane.showMessageDialog(mainFrame,
+                    "Fehler beim Vergleichen der Artikel: " + e.getMessage(),
+                    "Fehler",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    /**
+     * Zeigt einen Dialog mit den Unterschieden zwischen lokalen und Server-Artikeln an.
+     *
+     * @param differences Liste der gefundenen Unterschiede
+     */
+    private void showDifferencesDialog(List<ArticleDifference> differences) {
+        if (differences.isEmpty()) {
+            JOptionPane.showMessageDialog(mainFrame,
+                    "Keine Unterschiede zwischen lokalen und Server-Artikeln gefunden.",
+                    "Keine Unterschiede",
+                    JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        // Erstelle Panel mit Scrollpane für viele Unterschiede
+        JPanel panel = new JPanel();
+        panel.setLayout(new BorderLayout());
+
+        // Texterzeugung für Unterschiede
+        StringBuilder diffText = new StringBuilder();
+        diffText.append("Folgende Unterschiede wurden gefunden:\n\n");
+
+        for (ArticleDifference diff : differences) {
+            diffText.append(diff.getDifferenceDescription()).append("\n\n");
+        }
+
+        JTextArea textArea = new JTextArea(diffText.toString());
+        textArea.setEditable(false);
+        textArea.setWrapStyleWord(true);
+        textArea.setLineWrap(true);
+
+        JScrollPane scrollPane = new JScrollPane(textArea);
+        scrollPane.setPreferredSize(new Dimension(500, 400));
+        panel.add(scrollPane, BorderLayout.CENTER);
+
+        // Optionen für den Dialog
+        String[] options = {"Lokale Änderungen hochladen", "Abbrechen"};
+
+        int option = JOptionPane.showOptionDialog(mainFrame, panel,
+                "Unterschiede zwischen lokalen und Server-Artikeln",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE,
+                null, options, options[0]);
+
+        // Wenn "Lokale Änderungen hochladen" gewählt
+        if (option == 0) {
+            syncLocalChangesToServer();
+        } else {
+            // Zurück in den Offline-Modus
+            offlineModeCheckbox.setSelected(true);
+            isOfflineMode = true;
+            updateConnectionStatus();
+        }
+    }
+
+    /**
      * Getter für selectedCells, damit der Renderer darauf zugreifen kann.
      *
      * @return Set mit ausgewählten Zellen als Points (x=row, y=column)
      */
     public Set<Point> getSelectedCells() {
         return selectedCells;
+    }
+
+    /**
+     * Gibt zurück, ob automatisches Speichern aktiviert ist.
+     *
+     * @return true wenn automatisches Speichern aktiviert ist, sonst false
+     */
+    public boolean isAutoSaveEnabled() {
+        return autoSaveCheckbox != null && autoSaveCheckbox.isSelected();
     }
 
     /**
@@ -182,6 +720,7 @@ public class LagerClientApp {
         logger.debug("Erstelle Menüleiste");
         JMenuBar menuBar = new JMenuBar();
 
+        // Formatierungsbuttons
         JButton boldButton = new JButton("Fett");
         boldButton.addActionListener(e -> {
             logger.debug("Fett-Schaltfläche geklickt");
@@ -203,6 +742,74 @@ public class LagerClientApp {
         menuBar.add(boldButton);
         menuBar.add(italicButton);
         menuBar.add(colorButton);
+
+        // Datei-Menü
+        JMenu fileMenu = new JMenu("Datei");
+
+        JMenuItem saveLocalItem = new JMenuItem("Lokal speichern");
+        saveLocalItem.addActionListener(e -> {
+            boolean success = ApiClient.saveArticlesToLocalFile(articles);
+            if (success) {
+                JOptionPane.showMessageDialog(mainFrame,
+                        "Artikel wurden lokal gespeichert.",
+                        "Lokale Speicherung",
+                        JOptionPane.INFORMATION_MESSAGE);
+            } else {
+                JOptionPane.showMessageDialog(mainFrame,
+                        "Fehler beim lokalen Speichern der Artikel.",
+                        "Speicherfehler",
+                        JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        JMenuItem loadLocalItem = new JMenuItem("Aus lokaler Datei laden");
+        loadLocalItem.addActionListener(e -> {
+            List<Article> loadedArticles = ApiClient.loadArticlesFromLocalFile();
+            if (!loadedArticles.isEmpty()) {
+                int response = JOptionPane.showConfirmDialog(mainFrame,
+                        "Möchten Sie die aktuellen Artikel durch die lokal gespeicherten ersetzen?",
+                        "Artikel laden",
+                        JOptionPane.YES_NO_OPTION);
+
+                if (response == JOptionPane.YES_OPTION) {
+                    articles.clear();
+                    articles.addAll(loadedArticles);
+
+                    // Aktualisiere die Tabelle
+                    tableModel = new ArticleTableModel(articles, changedArticles);
+                    table.setModel(tableModel);
+                    sorter = new TableRowSorter<>(tableModel);
+                    table.setRowSorter(sorter);
+                    sorter.setComparator(3, Comparator.comparingInt(o -> Integer.parseInt(o.toString())));
+                    tableModel.fireTableDataChanged();
+
+                    JOptionPane.showMessageDialog(mainFrame,
+                            "Artikel aus lokaler Datei geladen.",
+                            "Lokale Artikel",
+                            JOptionPane.INFORMATION_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(mainFrame,
+                        "Keine lokale Artikeldatei gefunden oder Datei ist leer.",
+                        "Laden fehlgeschlagen",
+                        JOptionPane.WARNING_MESSAGE);
+            }
+        });
+
+        JMenuItem exitItem = new JMenuItem("Beenden");
+        exitItem.addActionListener(e -> {
+            if (autoSaveCheckbox.isSelected()) {
+                ApiClient.saveArticlesToLocalFile(articles);
+            }
+            System.exit(0);
+        });
+
+        fileMenu.add(saveLocalItem);
+        fileMenu.add(loadLocalItem);
+        fileMenu.addSeparator();
+        fileMenu.add(exitItem);
+
+        menuBar.add(fileMenu);
 
         frame.setJMenuBar(menuBar);
         logger.debug("Menüleiste hinzugefügt");
@@ -290,13 +897,24 @@ public class LagerClientApp {
 
         if (changedArticles.isEmpty()) {
             logger.info("Keine Änderungen zu speichern");
-            JOptionPane.showMessageDialog(null, "Keine Änderungen zu speichern.");
+            JOptionPane.showMessageDialog(mainFrame, "Keine Änderungen zu speichern.");
             return;
         }
 
-        logger.debug("{} geänderte Artikel gefunden", changedArticles.size());
+        // Bei Offline-Modus nur lokal speichern
+        if (isOfflineMode) {
+            boolean success = saveChangesLocally(true); // true = explizites Speichern
+            if (success) {
+                JOptionPane.showMessageDialog(mainFrame,
+                        "Änderungen im Offline-Modus lokal gespeichert!",
+                        "Lokal gespeichert",
+                        JOptionPane.INFORMATION_MESSAGE);
+            }
+            return;
+        }
 
-        // Sammle Artikel, die einen Konflikt haben könnten
+        // Online-Modus: Prüfe auf Konflikte
+        logger.debug("{} geänderte Artikel gefunden", changedArticles.size());
         List<Article> conflictedArticles = new ArrayList<>();
 
         // Prüfe jeden geänderten Artikel auf Konflikte
@@ -328,9 +946,49 @@ public class LagerClientApp {
         } else {
             logger.info("Keine Konflikte gefunden, speichere Änderungen direkt");
             saveChangesForced(changedArticles);
+
+            // Nach erfolgreichem Speichern auch lokal speichern, wenn aktiviert
+            if (isAutoSaveEnabled()) {
+                ApiClient.saveArticlesToLocalFile(articles);
+            }
         }
     }
 
+    /**
+     * Speichert Änderungen nur lokal ohne Server-Kommunikation.
+     *
+     * @param explicitSave Gibt an, ob dies ein expliziter Speichervorgang ist (true) oder automatisch (false)
+     * @return true wenn erfolgreich gespeichert, sonst false
+     */
+    private boolean saveChangesLocally(boolean explicitSave) {
+        // Aktualisierte Artikel in die Hauptliste übernehmen
+        for (Article changedArticle : changedArticles) {
+            int index = -1;
+            for (int i = 0; i < articles.size(); i++) {
+                if (articles.get(i).id == changedArticle.id) {
+                    index = i;
+                    break;
+                }
+            }
+
+            if (index >= 0) {
+                articles.set(index, changedArticle);
+            }
+        }
+
+        // Lokal speichern
+        boolean success = ApiClient.saveArticlesToLocalFile(articles);
+
+        if (success) {
+            // Nur wenn explizit gespeichert wurde, die changedArticles leeren
+            if (explicitSave) {
+                changedArticles.clear();
+            }
+            logger.info("Änderungen lokal gespeichert" + (explicitSave ? " (explizit)" : " (automatisch)"));
+        }
+
+        return success;
+    }
     /**
      * Behandelt Konflikte zwischen lokalen und Datenbankversionen von Artikeln.
      *
@@ -363,7 +1021,7 @@ public class LagerClientApp {
         conflictMessage.append("Wie möchten Sie fortfahren?\n");
 
         String[] options = {"Meine Änderungen überschreiben", "Änderungen aus der DB übernehmen", "Abbrechen"};
-        int choice = JOptionPane.showOptionDialog(null,
+        int choice = JOptionPane.showOptionDialog(mainFrame,
                 conflictMessage.toString(),
                 "Konflikte erkannt",
                 JOptionPane.DEFAULT_OPTION,
@@ -379,10 +1037,20 @@ public class LagerClientApp {
             // Benutzer will seine Änderungen durchsetzen
             logger.info("Benutzer erzwingt eigene Änderungen");
             saveChangesForced(changedArticles);
+
+            // Nach erfolgreichem Speichern auch lokal speichern, wenn aktiviert
+            if (isAutoSaveEnabled()) {
+                ApiClient.saveArticlesToLocalFile(articles);
+            }
         } else if (choice == 1) {
             // Benutzer will DB-Änderungen übernehmen
             logger.info("Benutzer übernimmt DB-Änderungen");
             updateLocalArticles(conflictedArticles);
+
+            // Nach Aktualisierung auch lokal speichern, wenn aktiviert
+            if (isAutoSaveEnabled()) {
+                ApiClient.saveArticlesToLocalFile(articles);
+            }
         } else {
             // Benutzer bricht ab
             logger.info("Benutzer hat Speichern abgebrochen");
@@ -491,7 +1159,7 @@ public class LagerClientApp {
                         logger.error("Fehlerantwort vom Server für Artikel ID {}: {}", apiId, response.toString());
 
                         // Fehler dem Benutzer anzeigen
-                        JOptionPane.showMessageDialog(null,
+                        JOptionPane.showMessageDialog(mainFrame,
                                 "Fehler beim Speichern von Artikel #" + article.id + ": " + response.toString(),
                                 "Fehler",
                                 JOptionPane.ERROR_MESSAGE);
@@ -502,7 +1170,7 @@ public class LagerClientApp {
                 putConn.disconnect();
             } catch (Exception ex) {
                 logger.error("Ausnahme beim Speichern von Artikel ID {}: {}", article.id, ex.getMessage(), ex);
-                JOptionPane.showMessageDialog(null,
+                JOptionPane.showMessageDialog(mainFrame,
                         "Fehler beim Speichern: " + ex.getMessage(),
                         "Fehler",
                         JOptionPane.ERROR_MESSAGE);
@@ -512,7 +1180,7 @@ public class LagerClientApp {
 
         changedArticles.clear();
         logger.info("Alle Änderungen erfolgreich gespeichert");
-        JOptionPane.showMessageDialog(null, "Alle Änderungen gespeichert!", "Erfolg", JOptionPane.INFORMATION_MESSAGE);
+        JOptionPane.showMessageDialog(mainFrame, "Alle Änderungen gespeichert!", "Erfolg", JOptionPane.INFORMATION_MESSAGE);
     }
 
     /**
@@ -543,10 +1211,13 @@ public class LagerClientApp {
 
         tableModel.fireTableDataChanged();
         logger.info("Lokale Daten mit DB-Änderungen aktualisiert");
-        JOptionPane.showMessageDialog(null, "Lokale Daten wurden mit Datenbankänderungen aktualisiert.",
+        JOptionPane.showMessageDialog(mainFrame, "Lokale Daten wurden mit Datenbankänderungen aktualisiert.",
                 "Erfolg", JOptionPane.INFORMATION_MESSAGE);
     }
 
+    /**
+     * Fügt einen neuen Artikel hinzu.
+     */
     private void addNewArticle() {
         logger.info("Erstelle neuen Artikel");
 
@@ -623,7 +1294,13 @@ public class LagerClientApp {
                 return;
             }
 
-            // Senden des Artikels an den Server
+            // Im Offline-Modus: Temporäre ID generieren und lokal speichern
+            if (isOfflineMode) {
+                addNewArticleOffline(newArticle, dialog);
+                return;
+            }
+
+            // Online-Modus: Senden des Artikels an den Server
             try {
                 String apiUrl = AppConfig.getInstance().getApiUrl();
                 URL postUrl = new URL(apiUrl);
@@ -691,8 +1368,13 @@ public class LagerClientApp {
                     // Initialisiere das ID-Mapping neu
                     tableModel.refreshIdMapping();
 
+                    // Lokale Sicherung erstellen, wenn aktiviert
+                    if (isAutoSaveEnabled()) {
+                        ApiClient.saveArticlesToLocalFile(articles);
+                    }
+
                     logger.info("Benutzeroberfläche nach Artikelerstellung aktualisiert");
-                    JOptionPane.showMessageDialog(null, "Neuer Artikel wurde erstellt.", "Erfolg", JOptionPane.INFORMATION_MESSAGE);
+                    JOptionPane.showMessageDialog(mainFrame, "Neuer Artikel wurde erstellt.", "Erfolg", JOptionPane.INFORMATION_MESSAGE);
                 }
 
                 postConn.disconnect();
@@ -707,6 +1389,49 @@ public class LagerClientApp {
     }
 
     /**
+     * Fügt einen neuen Artikel im Offline-Modus hinzu.
+     *
+     * @param newArticle Der neue Artikel
+     * @param dialog Der Dialog, der geschlossen werden soll
+     */
+    private void addNewArticleOffline(Article newArticle, JDialog dialog) {
+        // Generiere negative ID für lokale Artikel (werden beim Synchronisieren mit dem Server ersetzt)
+        int minId = 0;
+        for (Article article : articles) {
+            if (article.id < minId) {
+                minId = article.id;
+            }
+        }
+        newArticle.id = minId - 1; // Neue lokale ID ist immer kleiner als alle bisherigen
+
+        // Artikel zur Liste hinzufügen
+        articles.add(newArticle);
+
+        // Timestamp speichern
+        originalTimestamps.put(newArticle.id, newArticle.timestamp);
+
+        // Tabelle aktualisieren
+        tableModel = new ArticleTableModel(articles, changedArticles);
+        table.setModel(tableModel);
+        sorter = new TableRowSorter<>(tableModel);
+        table.setRowSorter(sorter);
+        sorter.setComparator(3, Comparator.comparingInt(o -> Integer.parseInt(o.toString())));
+        table.setDefaultRenderer(Object.class, new StyledCellRenderer(articles));
+        tableModel.refreshIdMapping();
+
+        // Lokal speichern
+        if (isAutoSaveEnabled()) {
+            ApiClient.saveArticlesToLocalFile(articles);
+        }
+
+        dialog.dispose();
+        JOptionPane.showMessageDialog(mainFrame,
+                "Neuer Artikel im Offline-Modus erstellt.\nDie Artikel-ID wird bei der nächsten Synchronisierung aktualisiert.",
+                "Artikel erstellt",
+                JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    /**
      * Löscht einen Artikel.
      *
      * @param modelRow Die Zeile des zu löschenden Artikels im Modell
@@ -714,7 +1439,7 @@ public class LagerClientApp {
     private void deleteArticle(int modelRow) {
         if (modelRow < 0 || modelRow >= articles.size()) {
             logger.warn("Versuch, ungültigen Artikel zu löschen: Zeile {}", modelRow);
-            JOptionPane.showMessageDialog(null, "Ungültiger Artikel ausgewählt.",
+            JOptionPane.showMessageDialog(mainFrame, "Ungültiger Artikel ausgewählt.",
                     "Fehler", JOptionPane.ERROR_MESSAGE);
             return;
         }
@@ -726,7 +1451,7 @@ public class LagerClientApp {
         logger.info("Löschen von Artikel ID {} ({}) angefordert", apiId, article.name);
 
         // Bestätigungsdialog
-        int confirm = JOptionPane.showConfirmDialog(null,
+        int confirm = JOptionPane.showConfirmDialog(mainFrame,
                 "Möchten Sie Artikel #" + displayId + " (" + article.name + ") wirklich löschen?",
                 "Artikel löschen",
                 JOptionPane.YES_NO_OPTION);
@@ -736,7 +1461,27 @@ public class LagerClientApp {
             return;
         }
 
-        // API-Aufruf zum Löschen
+        // Im Offline-Modus: Nur lokal löschen
+        if (isOfflineMode) {
+            articles.remove(modelRow);
+            originalTimestamps.remove(apiId);
+            tableModel.fireTableDataChanged();
+            tableModel.refreshIdMapping();
+            selectedCells.clear();
+
+            // Lokale Datei aktualisieren
+            if (isAutoSaveEnabled()) {
+                ApiClient.saveArticlesToLocalFile(articles);
+            }
+
+            JOptionPane.showMessageDialog(mainFrame,
+                    "Artikel im Offline-Modus gelöscht.",
+                    "Artikel gelöscht",
+                    JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        // Online-Modus: API-Aufruf zum Löschen
         try {
             String apiUrl = AppConfig.getInstance().getApiUrl();
             URL deleteUrl = new URL(apiUrl + "/" + apiId);
@@ -763,17 +1508,22 @@ public class LagerClientApp {
                 // Leere die ausgewählten Zellen, da sich die Indizes verschoben haben
                 selectedCells.clear();
 
+                // Lokale Datei aktualisieren, wenn aktiviert
+                if (isAutoSaveEnabled()) {
+                    ApiClient.saveArticlesToLocalFile(articles);
+                }
+
                 logger.info("Artikel ID {} erfolgreich gelöscht", apiId);
-                JOptionPane.showMessageDialog(null, "Artikel erfolgreich gelöscht.",
+                JOptionPane.showMessageDialog(mainFrame, "Artikel erfolgreich gelöscht.",
                         "Erfolg", JOptionPane.INFORMATION_MESSAGE);
             } else {
                 logger.error("Fehler beim Löschen von Artikel ID {}: HTTP-Code {}", apiId, responseCode);
-                JOptionPane.showMessageDialog(null, "Fehler beim Löschen des Artikels: " + responseCode,
+                JOptionPane.showMessageDialog(mainFrame, "Fehler beim Löschen des Artikels: " + responseCode,
                         "Fehler", JOptionPane.ERROR_MESSAGE);
             }
         } catch (Exception ex) {
             logger.error("Ausnahme beim Löschen von Artikel ID {}: {}", apiId, ex.getMessage(), ex);
-            JOptionPane.showMessageDialog(null, "Fehler beim Löschen des Artikels: " + ex.getMessage(),
+            JOptionPane.showMessageDialog(mainFrame, "Fehler beim Löschen des Artikels: " + ex.getMessage(),
                     "Fehler", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -824,6 +1574,18 @@ public class LagerClientApp {
 
         logger.debug("Formatierung angewendet, Tabelle wird neu gezeichnet");
         table.repaint();
+
+        // Automatisches Speichern, wenn aktiviert
+        if (isAutoSaveEnabled()) {
+            // Im Offline-Modus direkt speichern, aber changedArticles nicht leeren
+            if (isOfflineMode) {
+                ApiClient.saveArticlesToLocalFile(articles);
+                logger.info("Formatierungen automatisch lokal gespeichert (Offline-Modus)");
+            } else {
+                // Im Online-Modus mit normaler Methode speichern
+                saveChangesLocally(false); // false = automatisches Speichern
+            }
+        }
     }
 
     /**
@@ -832,7 +1594,7 @@ public class LagerClientApp {
     private void changeCellColor() {
         logger.info("Farbänderung für {} ausgewählte Zellen angefordert", selectedCells.size());
 
-        Color newColor = JColorChooser.showDialog(null, "Wähle eine Farbe", Color.BLACK);
+        Color newColor = JColorChooser.showDialog(mainFrame, "Wähle eine Farbe", Color.BLACK);
         if (newColor == null) {
             logger.debug("Farbauswahl abgebrochen");
             return;
@@ -875,8 +1637,19 @@ public class LagerClientApp {
 
         logger.debug("Farbänderung angewendet, Tabelle wird neu gezeichnet");
         table.repaint();
-    }
 
+        // Automatisches Speichern, wenn aktiviert
+        if (isAutoSaveEnabled()) {
+            // Im Offline-Modus direkt speichern, aber changedArticles nicht leeren
+            if (isOfflineMode) {
+                ApiClient.saveArticlesToLocalFile(articles);
+                logger.info("Farbänderungen automatisch lokal gespeichert (Offline-Modus)");
+            } else {
+                // Im Online-Modus mit normaler Methode speichern
+                saveChangesLocally(false); // false = automatisches Speichern
+            }
+        }
+    }
     /**
      * Gibt Informationen über ausgewählte Zellen in der Konsole aus.
      * Primär für Debug-Zwecke.

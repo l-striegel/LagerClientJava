@@ -4,6 +4,7 @@ Eine Java-Desktop-Anwendung zur Verwaltung von Lagerartikeln mit benutzerfreundl
 
 ![Java Version](https://img.shields.io/badge/Java-21-orange)
 ![Status](https://img.shields.io/badge/Status-Stable-green)
+![Version](https://img.shields.io/badge/Version-1.1.0-blue)
 
 ## Features
 
@@ -12,6 +13,7 @@ Eine Java-Desktop-Anwendung zur Verwaltung von Lagerartikeln mit benutzerfreundl
 - **Konfliktmanagement**: Erkennung und Auflösung von Bearbeitungskonflikten bei gleichzeitiger Nutzung
 - **Konfigurierbarkeit**: Externe Konfigurationsdatei für UI-Einstellungen und API-Verbindung
 - **Responsive Design**: Moderne Benutzeroberfläche mit Unterstützung für Sortierung und Filterung
+- **Offline-Modus**: Lokale Datenspeicherung zur Verwendung ohne Backend-Verbindung
 
 ## Screenshot
 ![image](https://github.com/user-attachments/assets/bcd121c0-f7dc-42c0-945e-627ea105e957)
@@ -20,20 +22,23 @@ Eine Java-Desktop-Anwendung zur Verwaltung von Lagerartikeln mit benutzerfreundl
 
 ### Voraussetzungen
 - Java 21 oder höher
-- Zugang zur Backend-API (standardmäßig auf https://localhost:5001/api/article)
+- Zugang zur Backend-API (standardmäßig auf https://localhost:5001/api/article) oder Nutzung im Offline-Modus
 
 ### Installation und Start
-1. Lade die [neueste Version](https://github.com/l-striegel/LagerClientJava/releases) herunter
-2. Entpacke alle Dateien in ein Verzeichnis deiner Wahl
-3. Passe bei Bedarf die `config.properties` Datei an
-4. Starte die Anwendung über die `start.bat` (Windows) oder über den Befehl:
-   ```
-   java -jar lagerclient-1.0-SNAPSHOT-jar-with-dependencies.jar
-   ```
+1. Lade die [neueste Version](https://github.com/l-striegel/LagerClientJava/releases/latest) herunter
+2. Entpacke die ZIP-Datei und lege die `lagerclient.jar` und `setup.bat` im selben Verzeichnis ab
+3. Führe die `setup.bat` aus, um die Anwendung zu installieren
+   - Dies erstellt automatisch alle notwendigen Verzeichnisse und Konfigurationsdateien
+   - Es wird ein "LagerClient" Ordner im aktuellen Verzeichnis erstellt
+   - Die Anwendung wird mit Beispieldaten für den Offline-Modus vorkonfiguriert
+4. Nach der Installation kannst du die Anwendung starten durch:
+   - Doppelklick auf die JAR-Datei im Installationsverzeichnis
+   - Wenn du bei der Installation einer Desktop-Verknüpfung zugestimmt hast, kannst du diese verwenden
+   - Alternativ: Nutze die mitinstallierte `start.bat` für bessere Fehlermeldungen und Debugging (zeigt Konsolenausgaben an)
 
 ## Konfiguration
 
-Die Anwendung wird über die `config.properties` Datei konfiguriert, die im selben Verzeichnis wie die JAR-Datei liegen muss:
+Die Anwendung wird über die `config.properties` Datei konfiguriert, die während der Installation erstellt wird:
 
 | Einstellung | Beschreibung | Standardwert |
 |-------------|--------------|--------------|
@@ -73,6 +78,22 @@ Zusätzlich gibt es eine zentrale Konfigurationsverwaltung mit der `AppConfig`-K
 3. Maven-Dependencies installieren
 4. Projekt bauen: `mvn clean package`
 
-## Lizenz
+## Änderungshistorie
 
+### v1.1.0
+- Implementierung eines Offline-Modus mit lokaler Datenspeicherung
+- Verbesserte Installation durch automatisiertes `setup.bat`-Skript
+- Automatische Erstellung aller benötigten Verzeichnisse und Konfigurationsdateien
+- Option zur Erstellung einer Desktop-Verknüpfung
+
+### v1.0.1
+- Hartcodierte URLs entfernt und durch AppConfig-Einstellungen ersetzt
+
+### v1.0.0
+- Erste stabile veröffentlichte Version
+
+## Lizenz
 Dieses Projekt ist für Bewerbungszwecke erstellt und unterliegt keiner spezifischen Lizenz.
+
+Icon-Attributionen:
+- In-stock icons created by Freepik - Flaticon (https://www.flaticon.com/free-icons/in-stock)
